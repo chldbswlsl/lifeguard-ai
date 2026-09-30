@@ -97,3 +97,17 @@ def link_guardian(senior_id: int, data: GuardianLink, db: DbSession, _: AdminUse
         senior.guardians.append(guardian)
         db.commit()
     return senior.guardians
+
+
+@router.delete("/{senior_id}/guardians/{user_id}", response_model=list[UserOut])
+def unlink_guardian(senior_id: int, user_id: int, db: DbSession, _: AdminUser) -> list[User]:
+    """관리자가 보호자 연결을 해제한다. 보호자 계정 자체는 지워지지 않는다."""
+    senior = db.get(Senior, senior_id)
+    if senior is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="어르신 정보를 찾을 수 없습니다")
+    guardian = next((g for g in senior.guardians if g.id == user_id), None)
+    if guardian is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="연결된 보호자가 아닙니다")
+    senior.guardians.remove(guardian)
+    db.commit()
+    return senior.guardians

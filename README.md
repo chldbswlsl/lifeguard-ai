@@ -20,12 +20,13 @@ AI를 활용한 독거노인 생활 안전 관리 서비스.
 6. [데이터 모델](#데이터-모델)
 7. [API](#api)
 8. [프론트엔드 구조](#프론트엔드-구조)
-9. [설계 결정과 이유](#설계-결정과-이유)
-10. [테스트](#테스트)
-11. [다음 작업](#다음-작업)
-12. [Git 작업 규칙](#git-작업-규칙)
-13. [알려진 문제와 주의사항](#알려진-문제와-주의사항)
-14. [작업 로그](#작업-로그)
+9. [보안](#보안)
+10. [설계 결정과 이유](#설계-결정과-이유)
+11. [테스트와 코드 검사](#테스트와-코드-검사)
+12. [다음 작업](#다음-작업)
+13. [Git 작업 규칙](#git-작업-규칙)
+14. [알려진 문제와 주의사항](#알려진-문제와-주의사항)
+15. [작업 로그](#작업-로그)
 
 ---
 
@@ -35,12 +36,14 @@ AI를 활용한 독거노인 생활 안전 관리 서비스.
 
 | 영역 | 상태 |
 |---|---|
-| 백엔드 (FastAPI + PostgreSQL) | ✅ 회원가입·로그인, 내 정보 관리, 어르신 CRUD, 보호자 연결, 생활 기록 저장·조회 |
+| 백엔드 (FastAPI + PostgreSQL) | ✅ 회원가입·로그인, 내 정보 관리, 어르신 CRUD, 보호자 연결·해제, 생활 기록 저장·조회 |
+| 보안 | ✅ 로그인·가입·비밀번호 변경 시도 제한, 토큰 무효화, 입력 검증, 보안 헤더 등 ([보안](#보안) 참고) |
 | 가상 데이터 | ✅ 평소 하루 생성기, seed 스크립트 (어르신 3명 × 28일) — ⬜ 이상 상황 시나리오는 아직 |
 | 웹 (React) | ✅ 로그인·회원가입, 관리자 페이지(어르신 목록·현황), 어르신 상세·생활 기록 입력, 내 정보 |
 | AI 분석 | ⬜ 시작 전 (10월 작업) |
 | 알림 | ⬜ 시작 전 (11월 작업) |
-| 테스트 | ✅ 백엔드 pytest 20개 통과 / 프론트엔드는 타입 검사·빌드만 통과 (자동 테스트 없음) |
+| 테스트 | ✅ 백엔드 pytest 48개 (커버리지 96%) + 브라우저 e2e 11개 (Playwright) + ruff·ESLint |
+| CI | ✅ GitHub Actions: push·PR마다 코드 검사 → 테스트 → e2e |
 
 ---
 
@@ -85,6 +88,7 @@ cd backend
 cp .env.example .env                 # 필요하면 값 수정
 uv sync                              # 패키지 설치 (.venv 생성)
 uv run python -m app.seed            # 테스트 계정 + 어르신 3명 + 28일치 가상 기록
+uv run playwright install chromium   # e2e 테스트용 브라우저 (처음 한 번, 약 115MB)
 
 # 3) 프론트엔드
 cd ../frontend
@@ -136,16 +140,18 @@ lifeguard/
 ├── README.md                  # ← 이 문서 (인수인계용)
 ├── LifeGuard_AI_프로젝트_계획_보고서.docx   # 로컬에만 있음 (.gitignore)
 ├── docker-compose.yml         # PostgreSQL 17
+├── .github/workflows/ci.yml   # GitHub Actions (코드 검사 + 테스트 + e2e)
 ├── backend/                   # FastAPI 서버
-│   ├── pyproject.toml         # 의존성 (uv)
-│   ├── .env.example           # 환경변수 예시 → .env로 복사해서 사용 (.env는 git 제외)
+│   ├── pyproject.toml         # 의존성 (uv), pytest·coverage·ruff 설정
+│   ├── .env.example           # 환경변수 예시·설명 → .env로 복사해서 사용 (.env는 git 제외)
 │   ├── app/
-│   │   ├── main.py            # 앱 생성, CORS, 라우터 등록, 시작 시 테이블 생성
-│   │   ├── config.py          # 환경변수 (DATABASE_URL, SECRET_KEY, …)
+│   │   ├── main.py            # 앱 생성, CORS, 라우터 등록, /health, 시작 시 테이블 생성
+│   │   ├── config.py          # 환경변수 (운영 환경에서 약한 SECRET_KEY면 시작 거부)
 │   │   ├── database.py        # SQLAlchemy 엔진·세션, get_db
 │   │   ├── models.py          # DB 테이블 정의
 │   │   ├── schemas.py         # 요청/응답 형식 (Pydantic) + 입력 검증
-│   │   ├── security.py        # 비밀번호 해시(argon2), JWT 발급·검증
+│   │   ├── security.py        # 비밀번호 해시(argon2), JWT 발급·검증, 시도 횟수 제한(RateLimiter)
+│   │   ├── http.py            # 보안 헤더, 본문 크기 제한, 에러 응답 형식(한국어), 클라이언트 IP
 │   │   ├── deps.py            # 로그인 사용자, 관리자 확인, 어르신 접근 권한 확인
 │   │   ├── routers/
 │   │   │   ├── auth.py        # /auth — 가입, 로그인, 내 정보, 비밀번호 변경
@@ -153,15 +159,19 @@ lifeguard/
 │   │   │   └── records.py     # /seniors/{id}/records — 생활 기록
 │   │   ├── simulate.py        # 가상 생활 데이터 생성기 (LifeProfile → 하루 기록)
 │   │   └── seed.py            # 개발용 초기 데이터
-│   └── tests/                 # pytest (SQLite 메모리 DB 사용, Docker 불필요)
+│   └── tests/
+│       ├── conftest.py        # 공통 fixture (SQLite 메모리 DB, 로그인된 guardian/admin 헤더)
+│       ├── test_auth.py / test_seniors.py / test_records.py / test_http.py
+│       └── e2e/               # Playwright 브라우저 테스트 (pytest -m e2e)
 └── frontend/                  # React 웹 (Vite + TypeScript)
-    ├── vite.config.ts         # /api → localhost:8000 프록시
+    ├── vite.config.ts         # /api → 백엔드 프록시 (API_URL 환경변수로 변경 가능)
+    ├── eslint.config.js       # 코드 검사 규칙
     └── src/
-        ├── main.tsx           # 진입점
+        ├── main.tsx           # 진입점 (ErrorBoundary → DialogProvider → AuthProvider → App)
         ├── App.tsx            # 라우팅, 로그인 필요 화면의 공통 레이아웃(상단 메뉴)
-        ├── api.ts             # 백엔드 호출 함수 + 응답 타입 (API가 바뀌면 여기부터 수정)
-        ├── auth.tsx           # 로그인 상태 (토큰은 localStorage에 저장)
-        ├── format.ts          # 날짜·시간·숫자 표시 도우미
+        ├── api.ts             # 백엔드 호출 함수 + 응답 타입 + 에러 처리 (API가 바뀌면 여기부터 수정)
+        ├── auth.tsx           # 로그인 상태, 토큰 만료·401 시 자동 로그아웃
+        ├── format.ts          # 날짜·시간·숫자 표시, 비밀번호 규칙 검사
         ├── index.css          # 전체 스타일 (색은 :root 변수)
         ├── pages/
         │   ├── LoginPage.tsx
@@ -172,7 +182,12 @@ lifeguard/
         └── components/
             ├── SeniorForm.tsx        # 어르신 등록·수정 폼
             ├── RecordForm.tsx        # 생활 기록 입력·수정 폼
-            └── HourlyBars.tsx        # 시간대별 활동량 막대 24개
+            ├── HourlyBars.tsx        # 시간대별 활동량 막대 24개
+            ├── Dialog.tsx            # 확인창·알림(toast) — window.confirm/alert 대신 사용
+            ├── ErrorBoundary.tsx     # 화면 오류가 나도 앱 전체가 멈추지 않게
+            ├── useLeaveGuard.ts      # 작성 중 이탈 경고
+            ├── PasswordInput.tsx     # 보기/숨기기 버튼이 있는 비밀번호 입력
+            └── FieldError.tsx        # 입력 칸 아래 에러 메시지
 ```
 
 ---
@@ -191,6 +206,7 @@ users ──< guardian_senior >── seniors ──< daily_records
 | password_hash | argon2 해시 |
 | name, phone | 이름, 연락처 |
 | role | `guardian`(보호자) / `admin`(관리자) |
+| token_version | 비밀번호를 바꿀 때마다 1 증가. 토큰 안의 버전과 다르면 그 토큰은 무효 |
 
 ### seniors
 | 컬럼 | 설명 |
@@ -226,7 +242,7 @@ users ──< guardian_senior >── seniors ──< daily_records
 | POST | `/auth/login` | 누구나 | form 형식: `username`=이메일, `password` → `access_token` |
 | GET | `/auth/me` | 로그인 | 내 정보 |
 | PATCH | `/auth/me` | 로그인 | 이름·연락처 수정 (보낸 필드만 바뀜) |
-| POST | `/auth/me/password` | 로그인 | 비밀번호 변경 (현재 비밀번호 필요) |
+| POST | `/auth/me/password` | 로그인 | 비밀번호 변경 (현재 비밀번호 필요). **새 토큰을 돌려준다** — 이전 토큰은 모두 무효 |
 | GET | `/seniors` | 로그인 | 어르신 목록 + 최근 기록 요약(`last_record_date`, `last_activity_level`, `guardian_count`). 보호자는 담당 어르신만 |
 | POST | `/seniors` | 로그인 | 어르신 등록. 보호자가 등록하면 자동으로 본인과 연결 |
 | GET | `/seniors/{id}` | 담당·관리자 | 어르신 조회 |
@@ -234,13 +250,38 @@ users ──< guardian_senior >── seniors ──< daily_records
 | DELETE | `/seniors/{id}` | 관리자 | 어르신과 모든 기록 삭제 |
 | GET | `/seniors/{id}/guardians` | 담당·관리자 | 담당 보호자 목록 |
 | POST | `/seniors/{id}/guardians` | 관리자 | 가입된 보호자를 이메일로 연결 |
-| GET | `/seniors/{id}/records?start=&end=` | 담당·관리자 | 기간 조회 (양 끝 포함, 날짜 오름차순) |
-| PUT | `/seniors/{id}/records/{YYYY-MM-DD}` | 담당·관리자 | 그날 기록 저장. 새로 만들면 201, 있으면 **전체 덮어쓰기** 후 200 |
+| DELETE | `/seniors/{id}/guardians/{user_id}` | 관리자 | 보호자 연결 해제 (계정은 남는다) |
+| GET | `/seniors/{id}/records?start=&end=` | 담당·관리자 | 기간 조회 (양 끝 포함, 날짜 오름차순, **최대 366일**). start를 생략하면 end로부터 366일 전부터 |
+| PUT | `/seniors/{id}/records/{YYYY-MM-DD}` | 담당·관리자 | 그날 기록 저장. 새로 만들면 201, 있으면 **전체 덮어쓰기** 후 200. 내일보다 미래 날짜는 거절 |
 | GET | `/seniors/{id}/records/{YYYY-MM-DD}` | 담당·관리자 | 하루 기록 |
 | DELETE | `/seniors/{id}/records/{YYYY-MM-DD}` | 담당·관리자 | 하루 기록 삭제 |
-| GET | `/health` | 누구나 | 서버 상태 확인 |
+| GET | `/health` | 누구나 | 서버와 DB 상태 (`{"status":"ok","db":"ok"}`, DB가 안 되면 503) |
 
-에러 응답은 FastAPI 기본 형식이다. `{"detail": "한글 메시지"}` 또는 입력 검증 실패 시 `{"detail": [{loc, msg}, …]}`(422)로 온다. 프론트엔드의 `api.ts`의 `errorMessage()`가 두 형식을 모두 처리한다.
+### 에러 응답 형식
+
+모든 에러는 `{"detail": "사용자에게 보여줄 한국어 메시지"}` 형식이다 (`app/http.py`).
+입력값 검증 실패(422)는 항목별 에러가 추가된다.
+
+```json
+{
+  "detail": "비밀번호: 8자 이상 입력해 주세요 / 연락처: 형식이 올바르지 않습니다",
+  "errors": [
+    {"field": "password", "label": "비밀번호", "message": "8자 이상 입력해 주세요"},
+    {"field": "phone", "label": "연락처", "message": "형식이 올바르지 않습니다"}
+  ]
+}
+```
+
+| 상태 코드 | 의미 |
+|---|---|
+| 401 | 로그인 필요 / 토큰 만료·무효 (프론트엔드는 자동 로그아웃) |
+| 403 | 권한 없음 (보호자가 관리자 기능 요청) |
+| 404 | 없음, **또는 담당이 아닌 어르신** |
+| 409 | 중복 (이미 가입된 이메일) |
+| 413 | 요청 본문이 너무 큼 (기본 512KB) |
+| 422 | 입력값 오류 (정의되지 않은 필드를 보내도 422) |
+| 429 | 시도 횟수 초과 (`Retry-After` 헤더에 기다릴 초) |
+| 500 | 서버 오류. 내부 정보는 응답에 넣지 않고 서버 로그에만 남긴다 |
 
 ---
 
@@ -253,10 +294,50 @@ users ──< guardian_senior >── seniors ──< daily_records
 | `/seniors/:id` | 기본 정보, 보호자(관리자는 연결 가능), 최근 28일 생활 기록 표, 기록 입력·수정·삭제 | 담당·관리자 |
 | `/me` | 내 정보 수정, 비밀번호 변경 | 로그인 |
 
-- **새 API를 쓰려면** `src/api.ts`에 타입과 함수를 추가하고, 화면에서는 `api.xxx()`로 호출한다. 화면 코드에서 fetch를 직접 쓰지 않는다.
-- 로그인 토큰은 `localStorage`의 `lifeguard_token`에 저장된다. 만료 기간은 24시간이다(`ACCESS_TOKEN_EXPIRE_MINUTES`).
+### 화면 코드 작성 규칙
+
+| 하고 싶은 것 | 방법 |
+|---|---|
+| API 호출 | `src/api.ts`에 타입과 함수를 추가하고 `api.xxx()`로 호출한다. 화면 코드에서 `fetch`를 직접 쓰지 않는다 |
+| 에러 메시지 표시 | `catch (e) { setError(errorMessage(e)) }`. 입력 칸별 에러는 `e.fieldErrors` → `<FieldError errors={…} name="필드명" />` |
+| 삭제 등 확인 받기 | `const { confirmDialog } = useDialog();` → `if (!(await confirmDialog({ title, message, confirmText: "삭제", danger: true }))) return;` — **`window.confirm` 금지** |
+| 성공·실패 알림 | `toast("저장했습니다")`, `toast("실패", "error")` — **`alert` 금지** |
+| 작성 중 이탈 경고 | 폼 컴포넌트에서 `useLeaveGuard(수정했는지)` |
+| 비밀번호 입력 | `<PasswordInput autoComplete="current-password" 또는 "new-password" />` |
+| 로그인한 사용자 | `const user = useUser();` (로그인 화면이 아닌 곳에서만) |
+
+- API 요청은 10초가 지나면 "서버 응답이 너무 늦습니다"로 실패한다.
+- 로그인 토큰은 `localStorage`의 `lifeguard_token`에 저장된다. 만료 기간은 24시간이다(`ACCESS_TOKEN_EXPIRE_MINUTES`). API가 401을 주거나 만료 시각이 지나면 자동으로 로그인 화면으로 가고 "로그인이 만료되었습니다" 안내가 뜬다. 로그아웃하면 `lifeguard_`로 시작하는 저장값이 모두 지워진다.
+- 로그아웃은 `/logout` 경로로 **이동**하는 방식이다. 그래서 작성 중이면 이탈 경고가 먼저 뜬다.
 - 별도 UI 라이브러리 없이 `index.css` 하나로 스타일을 관리한다. 색은 `:root`의 변수로 정의되어 있다.
 - 목록의 **위험도** 칸은 지금 "분석 준비 중"이라고만 표시한다. 10월 AI 작업이 끝나면 실제 값으로 바꾼다(`SeniorListPage.tsx`).
+
+---
+
+## 보안
+
+공개 저장소이고 어르신 생활 정보는 민감한 개인정보다(계획서 6장). 아래 항목은 **테스트로 확인하고 있으니** 바꿀 때 테스트도 같이 고친다.
+bp-portal, CO2 프로젝트에서 쓰던 방식을 맞춰서 적용했다.
+
+| 항목 | 내용 | 위치 |
+|---|---|---|
+| 비밀번호 저장 | argon2 해시 | `security.py` |
+| 비밀번호 규칙 | 8~128자, 영문과 숫자 포함, 이메일(또는 이메일 앞부분)과 같으면 거절 | `schemas.py`, 화면은 `format.ts` |
+| 가입 여부 숨김 | 없는 이메일로 로그인해도 해시 검증을 똑같이 수행한다 → 응답 시간·메시지가 같다 | `security.py` |
+| 로그인 시도 제한 | 같은 이메일 또는 같은 IP로 5번 실패하면 15분 잠금 (429). 성공하면 이메일 카운터만 초기화, IP 카운터는 유지 | `security.py`, `routers/auth.py` |
+| 가입·비밀번호 변경 제한 | 가입: IP당 1시간 10번. 비밀번호 변경 실패: 사용자당 5분 10번 | 같음 |
+| 토큰 무효화 | 비밀번호를 바꾸면 `token_version`이 올라가서 다른 기기의 토큰이 모두 무효가 된다 | `deps.py` |
+| 담당 아닌 데이터 | 다른 보호자의 어르신은 존재 여부도 알 수 없게 404 | `deps.py` |
+| 권한 상승 방지 | 가입 요청에 `role` 등 정의되지 않은 필드를 넣으면 422 | `schemas.py` (`extra="forbid"`) |
+| 입력 검증 | 앞뒤 공백 제거, 글자 수·숫자 범위 상한, 전화번호 형식, 미래 날짜 거절, 조회 기간 최대 366일 | `schemas.py`, `routers/records.py` |
+| 보안 헤더 | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`, https일 때 HSTS | `http.py` |
+| 본문 크기 제한 | 512KB 초과 요청은 413 | `http.py` |
+| 에러 정보 숨김 | 예상치 못한 오류는 "서버 내부 오류" 메시지만 응답하고, 상세 내용은 서버 로그에만 남긴다 | `http.py` |
+| 운영 설정 검사 | `APP_ENV=production`인데 SECRET_KEY가 기본값이거나 32자 미만이면 서버가 시작하지 않는다. `/docs`도 꺼진다 | `config.py` |
+| 프록시 IP | `TRUST_PROXY=true`일 때만 `X-Forwarded-For`의 **마지막** 값(프록시가 붙인 값)을 믿는다 | `http.py` |
+| 화면 | 401이나 토큰 만료 시 자동 로그아웃. 로그아웃하면 저장값 삭제 | `api.ts`, `auth.tsx` |
+
+**아직 없는 것** (운영 배포 전에 검토): HTTPS 설정(nginx), 요청 제한의 Redis 이전(서버 여러 대일 때), CSP 헤더, 감사 로그, 계정 잠금 해제 기능.
 
 ---
 
@@ -279,17 +360,35 @@ users ──< guardian_senior >── seniors ──< daily_records
 
 ---
 
-## 테스트
+## 테스트와 코드 검사
+
+커밋 전에 아래가 모두 통과해야 한다. GitHub Actions(`.github/workflows/ci.yml`)도 push·PR마다 같은 것을 돌린다.
 
 ```bash
-cd backend && uv run pytest          # 백엔드 (Docker 불필요, SQLite 메모리 DB)
-cd frontend && npm run build         # 프론트엔드 타입 검사 + 빌드
+# 백엔드 — Docker 불필요 (SQLite 메모리 DB)
+cd backend
+uv run ruff check . && uv run ruff format --check .   # 코드 검사 (자동 수정: ruff check --fix . && ruff format .)
+uv run pytest --cov                                   # 단위 테스트 + 커버리지 (90% 미만이면 실패)
+uv run pytest -m e2e                                  # 브라우저 e2e 테스트 (약 15초)
+
+# 프론트엔드
+cd frontend
+npm run lint                                          # ESLint
+npm run build                                         # 타입 검사 + 빌드
 ```
 
-- 테스트 파일: `tests/test_auth.py`, `tests/test_seniors.py`, `tests/test_records.py`
-- 공통 fixture는 `tests/conftest.py`에 있다. `guardian`, `other_guardian`, `admin`은 각각 로그인된 헤더를 돌려준다. 테스트마다 DB를 새로 만든다.
+### 단위 테스트 (`backend/tests/`)
+- 파일: `test_auth.py`(가입·로그인·시도 제한·토큰), `test_seniors.py`(권한·수정·삭제·보호자 연결), `test_records.py`(저장·조회·검증), `test_http.py`(보안 헤더·에러 형식·설정 검사)
+- 테스트 이름은 기대 결과를 한국어 문장으로 쓴다. 예: `test_담당이_아니면_404`
+- 공통 fixture(`conftest.py`): `guardian`, `other_guardian`, `admin`은 로그인된 헤더를 돌려준다. 테스트마다 DB와 요청 제한 카운터를 초기화한다.
+- 날짜는 `dt.date.today()` 기준으로 만든다. 고정 날짜는 1년이 지나면 조회 기간(366일)에서 벗어나 테스트가 깨진다.
 - **새 API를 만들면 테스트도 같이 추가한다.** 권한 확인(다른 보호자가 접근하면 404가 나는지)을 꼭 넣는다.
-- 프론트엔드 자동 테스트는 아직 없다. 화면을 바꾸면 브라우저에서 관리자·보호자 계정으로 각각 직접 확인한다.
+
+### e2e 테스트 (`backend/tests/e2e/`)
+- Playwright(Chromium)로 실제 화면을 조작한다. 테스트 전용 백엔드(포트 8765, 임시 SQLite + seed)와 빌드된 프론트엔드(포트 4174)를 직접 띄우므로 **개발 서버·DB에 영향이 없다.**
+- 확인 내용: 로그인 실패 안내, 관리자·보호자 화면 차이, 기록 입력과 덮어쓰기 확인, 칸별 에러, 작성 중 이탈 경고, 어르신 등록·삭제, 보호자 연결·해제, 회원가입 규칙, 토큰 만료 시 자동 로그아웃, 로그아웃 시 저장값 삭제
+- 각 테스트가 끝날 때 화면을 `backend/e2e-screenshots/`에 저장한다(git 제외). CI에서 실패하면 Actions 화면에서 캡처를 내려받을 수 있다.
+- 화면을 바꾸면 e2e 테스트의 선택자(버튼 이름, 라벨)도 같이 확인한다.
 
 ---
 
@@ -324,17 +423,18 @@ cd frontend && npm run build         # 프론트엔드 타입 검사 + 빌드
 - 12월 시연 시나리오: 정상 → 활동량 감소(주의) → 장시간 무활동 + 식사 없음(위험) → 보호자 알림
 
 ### 정리하면 좋은 것 (급하지 않음)
-- GitHub Actions로 push할 때 pytest와 `npm run build` 자동 실행
 - Alembic 마이그레이션 도입 (실제 데이터가 쌓이기 전에)
-- 보호자 연결 해제 API (지금은 연결만 가능)
 - 기록 목록 화면에 기간 선택 기능 (지금은 최근 28일 고정)
+- 동시 수정 충돌 감지: 두 보호자가 같은 기록을 동시에 고치면 나중 저장이 이긴다. `updated_at`을 같이 보내서 바뀌었으면 409로 막는 방식(bp-portal의 `baseUpdatedAt`)을 검토
+- 관리자용 사용자 목록 (지금은 보호자를 이메일로만 연결)
+- 운영 배포 준비: Dockerfile, nginx(HTTPS), [보안](#보안)의 "아직 없는 것"
 
 ---
 
 ## Git 작업 규칙
 
 - 기본 브랜치는 `main`이다. 기능 단위로 브랜치를 만든다(예: `feat/baseline`, `fix/record-form`). 작업이 끝나면 PR을 올리거나 main에 병합한다.
-- 커밋하기 전에 `uv run pytest`와 `npm run build`가 통과하는지 확인한다.
+- 커밋하기 전에 [테스트와 코드 검사](#테스트와-코드-검사)가 모두 통과하는지 확인한다. push하면 GitHub Actions가 다시 확인한다.
 - **올리면 안 되는 것**: `backend/.env`(비밀키), `*.db`, `node_modules/`, `.venv/`, 계획 보고서(`*.docx`). 모두 `.gitignore`에 들어 있다.
 - 줄바꿈은 LF로 통일한다(`.gitattributes`). Windows에서 작업해도 자동으로 맞춰진다.
 - **공개 저장소**이므로 실제 어르신 정보, 실제 비밀번호, API 키는 절대 커밋하지 않는다. 테스트에는 가상 데이터만 쓴다.
@@ -349,7 +449,13 @@ cd frontend && npm run build         # 프론트엔드 타입 검사 + 빌드
   - 해결: 두 PID를 모두 종료한 뒤 서버를 다시 실행한다. PowerShell에서는 `Stop-Process -Id <PID> -Force`로 종료한다. PID가 이미 없다고 나오면, 그 PID를 부모로 둔 자식 python 프로세스를 종료한다.
 - **Git Bash에서 curl로 한글 JSON을 보내면 400 에러가 난다.** 한글이 UTF-8로 전달되지 않기 때문이다. 한글이 들어간 API 테스트는 `/docs` 화면이나 Python 스크립트로 한다.
 - **모델을 바꾸면 DB를 초기화해야 한다** (위의 [DB 초기화](#db-초기화) 참고). `create_all`은 이미 있는 테이블의 컬럼을 바꾸지 않는다.
-- **`SECRET_KEY`**: 기본값은 개발용이다. 실제로 배포할 때는 `.env`에 긴 랜덤 문자열을 넣는다.
+  - 데이터를 지우기 싫으면 컬럼만 직접 추가한다. 2026-09-30에 추가된 컬럼 예:
+    `docker exec lifeguard-db psql -U lifeguard -c "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;"`
+- **`SECRET_KEY`**: 기본값은 개발용이다. 운영(`APP_ENV=production`)에서는 32자 이상 랜덤 문자열이 아니면 서버가 시작하지 않는다.
+- **TypeScript는 6.0으로 고정**했다. TypeScript 7이 나왔지만 ESLint용 `typescript-eslint`가 아직 6.0까지만 지원한다. 지원이 되면 올린다.
+- **요청 제한(로그인 잠금 등)은 서버 메모리에 저장**된다. 서버를 재시작하면 초기화되고, 서버를 여러 대로 늘리면 각자 따로 센다. 그때는 Redis로 옮겨야 한다.
+- 본문 크기 제한은 `Content-Length` 헤더 기준이다. 헤더 없이 조각(chunked)으로 보내는 요청은 운영 환경의 nginx(`client_max_body_size`)에서 막는다.
+- **SQLite 파일 DB 모드**(`sqlite:///./dev.db`)에서 동시 요청이 엉키는 버그가 있었다. 연결 하나를 여러 스레드가 같이 쓴 탓이었고, 2026-09-30에 수정했다(`database.py`). 메모리 DB만 연결을 공유한다.
 - seed의 가상 기록은 **seed를 실행한 날 기준 어제까지** 만들어진다. 며칠 지나면 목록에 "N일 전"과 "최근 기록 없음"이 뜨는 것은 정상이다. 최신으로 맞추려면 DB를 초기화하고 seed를 다시 실행한다.
 - 나이는 `올해 - 출생연도`로 계산한다. 생일이 지나기 전이면 만 나이보다 1살 많게 보일 수 있다.
 
@@ -359,8 +465,17 @@ cd frontend && npm run build         # 프론트엔드 타입 검사 + 빌드
 
 새 작업은 **맨 위에** 추가한다. 형식: 날짜 — 한 일 / 결정 / 남은 문제.
 
-### 2026-09-30 — 개발 시작, 9월 분량 완료
-- **환경**: FastAPI + SQLAlchemy 2 + PostgreSQL 17(Docker) / React 19 + Vite 8 + TypeScript 7 + react-router 8. Python 패키지는 uv로 관리한다.
+### 2026-09-30 (2) — 완성도·안전성 보강
+- **참고**: bp-portal(인증, Dialog, ErrorBoundary, leaveGuard, 서버 테스트), CO2(CI, 더미 해시, token_version, ruff, Playwright e2e), product-admin(에러 형식, 입력 검증, ESLint) 방식을 맞춰 적용했다.
+- **백엔드 보안**: 로그인·가입·비밀번호 변경 시도 제한, 가입 여부 숨김(더미 해시), 비밀번호 변경 시 이전 토큰 무효화(`token_version`), 비밀번호 규칙 강화, 운영 환경 SECRET_KEY 검사, 보안 헤더, 본문 크기 제한, 500 에러 내부 정보 숨김, 프록시 IP 처리
+- **백엔드 완성도**: 입력 검증 강화(공백, 상한, 전화번호, 미래 날짜, 정의되지 않은 필드 거절, 이름을 null로 보내면 500 나던 문제), 422 에러 한국어·항목별 형식, 동시 가입·동시 저장 시 500 대신 정상 처리, SQLite 외래키(CASCADE) 활성화, 보호자 연결 해제 API, 기록 조회 기간 제한, `/health`에 DB 확인
+- **프론트엔드**: 확인창·toast(Dialog), ErrorBoundary, 작성 중 이탈 경고, 비밀번호 보기, 401·토큰 만료 시 자동 로그아웃, 요청 10초 제한, 칸별 에러 표시, 보호자 연결 해제 버튼, 접근성(키보드로 목록 행 열기, aria 라벨)
+- **도구**: ruff, ESLint, pytest-cov(90% 기준), Playwright e2e 11개, GitHub Actions CI
+- **e2e로 찾은 버그**: SQLite 파일 모드에서 동시 요청이 엉키는 문제 → 수정. "연결" 버튼 글자가 두 줄로 꺾이는 문제 → 수정
+- **변경 주의**: `POST /auth/me/password` 응답이 204 → 200(새 토큰)으로 바뀌었다. users 테이블에 `token_version` 컬럼이 추가됐다(기존 DB는 ALTER 필요, [주의사항](#알려진-문제와-주의사항) 참고). TypeScript 7 → 6.0.
+
+### 2026-09-30 (1) — 개발 시작, 9월 분량 완료
+- **환경**: FastAPI + SQLAlchemy 2 + PostgreSQL 17(Docker) / React 19 + Vite 8 + TypeScript + react-router 8. Python 패키지는 uv로 관리한다.
 - **백엔드**
   - 모델: users, seniors, guardian_senior, daily_records
   - 인증: 회원가입, 로그인(JWT), 내 정보 조회·수정, 비밀번호 변경
@@ -372,4 +487,4 @@ cd frontend && npm run build         # 프론트엔드 타입 검사 + 빌드
 - **검증**: PostgreSQL에서 seed와 API 흐름(가입→로그인→등록→기록 입력·수정·삭제→내 정보 수정→비밀번호 변경)을 프록시 경유로 확인했다. 프론트엔드는 `npm run build`(타입 검사)를 통과했다. **브라우저에서 화면을 직접 눌러보는 확인은 아직 하지 않았다.**
 - **결정**: 위의 [설계 결정과 이유](#설계-결정과-이유) 참고
 - **GitHub**: 공개 저장소 `chldbswlsl/lifeguard-ai`를 만들고 첫 커밋을 올렸다. 계획 보고서(.docx)는 제외했다.
-- **남은 문제**: 목록의 위험도 칸은 임시 표시다. 브라우저에서 화면을 직접 확인하지 않았다.
+- **남은 문제**: 목록의 위험도 칸은 임시 표시다. (브라우저 확인은 (2)에서 e2e 테스트로 해결)

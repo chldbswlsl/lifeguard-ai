@@ -1,0 +1,74 @@
+# push·PR마다 코드 검사와 테스트를 자동으로 돌린다. 하나라도 실패하면 GitHub에 빨간 X가 뜬다.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: 백엔드 (ruff + pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: 코드 검사
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: 테스트 + 커버리지 (90% 미만이면 실패)
+        run: uv run pytest --cov
+
+  frontend:
+    name: 프론트엔드 (eslint + 타입 검사 + 빌드)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  e2e:
+    name: e2e (Playwright)
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: uv sync --locked
+        working-directory: backend
+      - run: uv run playwright install --with-deps chromium
+        working-directory: backend
+      - run: uv run pytest -m e2e
+        working-directory: backend
+      - name: 실패하면 화면 캡처 올리기
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: backend/e2e-screenshots/

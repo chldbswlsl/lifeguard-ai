@@ -23,12 +23,12 @@ def _enum(cls: type[enum.Enum]) -> Enum:
     return Enum(cls, native_enum=False, length=20, values_callable=lambda e: [m.value for m in e])
 
 
-class UserRole(str, enum.Enum):
+class UserRole(enum.StrEnum):
     GUARDIAN = "guardian"  # 보호자
     ADMIN = "admin"  # 사회복지사·관리자
 
 
-class RecordSource(str, enum.Enum):
+class RecordSource(enum.StrEnum):
     MANUAL = "manual"  # 직접 입력
     SIMULATED = "simulated"  # 가상 데이터
     SENSOR = "sensor"  # 센서 수집
@@ -52,6 +52,8 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(50))
     phone: Mapped[str | None] = mapped_column(String(20))
     role: Mapped[UserRole] = mapped_column(_enum(UserRole), default=UserRole.GUARDIAN)
+    # 비밀번호를 바꾸면 1 증가 → 이전에 발급된 토큰이 모두 무효가 된다
+    token_version: Mapped[int] = mapped_column(default=0, server_default="0")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     seniors: Mapped[list["Senior"]] = relationship(secondary=guardian_senior, back_populates="guardians")

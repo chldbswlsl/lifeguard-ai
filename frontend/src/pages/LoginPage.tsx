@@ -1,9 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { Link, Navigate } from "react-router";
+import { errorMessage } from "../api";
 import { useAuth } from "../auth";
+import PasswordInput from "../components/PasswordInput";
 
 export default function LoginPage() {
-  const { user, login } = useAuth();
+  const { user, notice, login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -16,9 +18,9 @@ export default function LoginPage() {
     setBusy(true);
     setError("");
     try {
-      await login(email, password);
+      await login(email.trim(), password);
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -31,15 +33,34 @@ export default function LoginPage() {
           LifeGuard <span>AI</span>
         </h1>
         <p className="muted">독거노인 생활 안전 관리 서비스</p>
+        {notice && <p className="notice">{notice}</p>}
         <label>
           이메일
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="username"
+            maxLength={255}
+            required
+            autoFocus
+          />
         </label>
         <label>
           비밀번호
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <PasswordInput
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            maxLength={128}
+            required
+          />
         </label>
-        {error && <p className="error">{error}</p>}
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
         <button className="primary" disabled={busy}>
           {busy ? "로그인 중…" : "로그인"}
         </button>

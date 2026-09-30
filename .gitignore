@@ -9,3 +9,7 @@ dist/
 
 # 계획 보고서는 저장소에 올리지 않는다 (로컬 보관)
 *.docx
+
+# e2e 테스트 화면 캡처
+backend/e2e-screenshots/
+.coverage

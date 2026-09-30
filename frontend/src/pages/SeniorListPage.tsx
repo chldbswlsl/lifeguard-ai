@@ -1,29 +1,45 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { api, type SeniorListItem } from "../api";
-import { useAuth } from "../auth";
+import { api, errorMessage, type SeniorListItem } from "../api";
+import { useUser } from "../auth";
 import SeniorForm from "../components/SeniorForm";
 import { age, daysSince, num } from "../format";
 
 export default function SeniorListPage() {
-  const { user } = useAuth();
-  const isAdmin = user!.role === "admin";
+  const isAdmin = useUser().role === "admin";
   const navigate = useNavigate();
   const [seniors, setSeniors] = useState<SeniorListItem[] | null>(null);
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
 
-  const load = () =>
-    api
-      .listSeniors()
-      .then(setSeniors)
-      .catch((e) => setError(e.message));
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    load();
-  }, []);
+    let cancelled = false;
+    api
+      .listSeniors()
+      .then((s) => !cancelled && setSeniors(s))
+      .catch((e) => !cancelled && setError(errorMessage(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
-  if (error) return <p className="error">{error}</p>;
+  if (error) {
+    return (
+      <div className="card empty">
+        <p className="error">{error}</p>
+        <button
+          onClick={() => {
+            setError("");
+            setReloadKey((k) => k + 1);
+          }}
+        >
+          다시 시도
+        </button>
+      </div>
+    );
+  }
   if (!seniors) return <p className="muted">불러오는 중…</p>;
 
   const stale = seniors.filter((s) => !s.last_record_date || daysSince(s.last_record_date) > 1).length;
@@ -78,7 +94,13 @@ export default function SeniorListPage() {
             </thead>
             <tbody>
               {seniors.map((s) => (
-                <tr key={s.id} onClick={() => navigate(`/seniors/${s.id}`)}>
+                <tr
+                  key={s.id}
+                  onClick={() => navigate(`/seniors/${s.id}`)}
+                  onKeyDown={(e) => e.key === "Enter" && navigate(`/seniors/${s.id}`)}
+                  tabIndex={0}
+                  aria-label={`${s.name} 상세 보기`}
+                >
                   <td>
                     <b>{s.name}</b>
                   </td>

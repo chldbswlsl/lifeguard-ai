@@ -2,7 +2,7 @@
 export default function HourlyBars({ values, max }: { values: number[] | null; max: number }) {
   if (!values) return <span className="muted">-</span>;
   return (
-    <div className="hourly" aria-label="시간대별 활동량">
+    <div className="hourly" role="img" aria-label={`0시~23시 움직임: ${values.join(", ")}`}>
       {values.map((v, h) => (
         <span
           key={h}

@@ -1,5 +1,7 @@
-import { useState, type FormEvent } from "react";
-import type { Senior, SeniorInput } from "../api";
+import { useState, type ChangeEvent, type FormEvent } from "react";
+import { ApiError, errorMessage, type Senior, type SeniorInput } from "../api";
+import FieldError from "./FieldError";
+import { useLeaveGuard } from "./useLeaveGuard";
 
 interface Props {
   initial?: Senior;
@@ -8,34 +10,48 @@ interface Props {
   onCancel: () => void;
 }
 
-export default function SeniorForm({ initial, submitLabel, onSubmit, onCancel }: Props) {
-  const [form, setForm] = useState({
-    name: initial?.name ?? "",
-    birth_year: initial?.birth_year?.toString() ?? "",
-    phone: initial?.phone ?? "",
-    address: initial?.address ?? "",
-    notes: initial?.notes ?? "",
-  });
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+function toForm(s?: Senior) {
+  return {
+    name: s?.name ?? "",
+    birth_year: s?.birth_year?.toString() ?? "",
+    phone: s?.phone ?? "",
+    address: s?.address ?? "",
+    notes: s?.notes ?? "",
+  };
+}
 
-  const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+export default function SeniorForm({ initial, submitLabel, onSubmit, onCancel }: Props) {
+  const [original] = useState(() => toForm(initial));
+  const [form, setForm] = useState(original);
+  const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const dirty = !saved && JSON.stringify(form) !== JSON.stringify(original);
+  useLeaveGuard(dirty);
+
+  const set = (key: keyof typeof form) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm({ ...form, [key]: e.target.value });
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
+    setFieldErrors({});
     try {
+      setSaved(true); // 저장 후 다른 화면으로 이동할 때 이탈 경고가 뜨지 않게
       await onSubmit({
         name: form.name.trim(),
         birth_year: form.birth_year ? Number(form.birth_year) : null,
-        phone: form.phone || null,
-        address: form.address || null,
-        notes: form.notes || null,
+        phone: form.phone.trim() || null,
+        address: form.address.trim() || null,
+        notes: form.notes.trim() || null,
       });
     } catch (err) {
-      setError((err as Error).message);
+      setSaved(false);
+      setError(errorMessage(err));
+      if (err instanceof ApiError) setFieldErrors(err.fieldErrors);
     } finally {
       setBusy(false);
     }
@@ -46,32 +62,48 @@ export default function SeniorForm({ initial, submitLabel, onSubmit, onCancel }:
       <div className="form-row">
         <label>
           이름
-          <input value={form.name} onChange={set("name")} required autoFocus />
+          <input value={form.name} onChange={set("name")} maxLength={50} required autoFocus />
+          <FieldError errors={fieldErrors} name="name" />
         </label>
         <label>
           출생연도
-          <input type="number" min={1900} max={2100} value={form.birth_year} onChange={set("birth_year")} placeholder="1945" />
+          <input
+            type="number"
+            min={1900}
+            max={new Date().getFullYear()}
+            value={form.birth_year}
+            onChange={set("birth_year")}
+            placeholder="1945"
+          />
+          <FieldError errors={fieldErrors} name="birth_year" />
         </label>
         <label>
           연락처
-          <input value={form.phone} onChange={set("phone")} placeholder="010-0000-0000" />
+          <input type="tel" value={form.phone} onChange={set("phone")} placeholder="010-0000-0000" maxLength={20} />
+          <FieldError errors={fieldErrors} name="phone" />
         </label>
       </div>
       <label>
         주소
-        <input value={form.address} onChange={set("address")} />
+        <input value={form.address} onChange={set("address")} maxLength={255} />
+        <FieldError errors={fieldErrors} name="address" />
       </label>
       <label>
         메모 <span className="muted">(건강 상태, 복용 약 등)</span>
-        <textarea rows={2} value={form.notes} onChange={set("notes")} />
+        <textarea rows={2} value={form.notes} onChange={set("notes")} maxLength={2000} />
+        <FieldError errors={fieldErrors} name="notes" />
       </label>
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
       <div className="actions">
         <button type="button" onClick={onCancel}>
           취소
         </button>
         <button className="primary" disabled={busy}>
-          {submitLabel}
+          {busy ? "저장 중…" : submitLabel}
         </button>
       </div>
     </form>

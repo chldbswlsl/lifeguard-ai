@@ -14,9 +14,9 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 
 def get_current_user(db: DbSession, token: Annotated[str, Depends(oauth2_scheme)]) -> User:
-    user_id = decode_access_token(token)
-    user = db.get(User, user_id) if user_id is not None else None
-    if user is None:
+    decoded = decode_access_token(token)
+    user = db.get(User, decoded[0]) if decoded else None
+    if user is None or decoded[1] != user.token_version:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="로그인이 필요합니다",

@@ -1,20 +1,26 @@
 import os
 
-os.environ["DATABASE_URL"] = "sqlite://"  # app import 전에 설정해야 한다
+# app import 전에 설정해야 한다
+os.environ["DATABASE_URL"] = "sqlite://"
+os.environ["APP_ENV"] = "test"
 
-import pytest
-from fastapi.testclient import TestClient
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
-from app.database import Base, SessionLocal, engine
-from app.main import app
-from app.models import User, UserRole
-from app.security import hash_password
+from app.database import Base, SessionLocal, engine  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models import User, UserRole  # noqa: E402
+from app.security import ALL_LIMITERS, hash_password  # noqa: E402
+
+PASSWORD = "password123"
 
 
 @pytest.fixture(autouse=True)
-def _reset_db():
+def _reset_state():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    for limiter in ALL_LIMITERS:
+        limiter._clear_for_tests()
     yield
 
 
@@ -24,7 +30,7 @@ def client():
         yield c
 
 
-def signup_and_login(client: TestClient, email: str, password: str = "password123", name: str = "보호자") -> dict:
+def signup_and_login(client: TestClient, email: str, password: str = PASSWORD, name: str = "보호자") -> dict:
     res = client.post("/auth/signup", json={"email": email, "password": password, "name": name})
     assert res.status_code == 201, res.text
     return login(client, email, password)
@@ -49,6 +55,8 @@ def other_guardian(client) -> dict:
 @pytest.fixture
 def admin(client) -> dict:
     with SessionLocal() as db:
-        db.add(User(email="admin@test.com", password_hash=hash_password("adminpass"), name="관리자", role=UserRole.ADMIN))
+        db.add(
+            User(email="admin@test.com", password_hash=hash_password("adminpass1"), name="관리자", role=UserRole.ADMIN)
+        )
         db.commit()
-    return login(client, "admin@test.com", "adminpass")
+    return login(client, "admin@test.com", "adminpass1")
