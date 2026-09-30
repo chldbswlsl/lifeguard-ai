@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:17
+    container_name: lifeguard-db
+    environment:
+      POSTGRES_USER: lifeguard
+      POSTGRES_PASSWORD: lifeguard
+      POSTGRES_DB: lifeguard
+      TZ: Asia/Seoul
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

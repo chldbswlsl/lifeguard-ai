@@ -1,0 +1,22 @@
+[project]
+name = "lifeguard-backend"
+version = "0.1.0"
+description = "LifeGuard AI - 독거노인 생활 안전 관리 서비스 백엔드"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.115",
+    "sqlalchemy>=2.0.36",
+    "psycopg[binary]>=3.2",
+    "pydantic-settings>=2.6",
+    "pyjwt>=2.10",
+    "pwdlib[argon2]>=0.2",
+]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.13.1",
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

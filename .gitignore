@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.pytest_cache/
+*.db
+node_modules/
+dist/
+
+# 계획 보고서는 저장소에 올리지 않는다 (로컬 보관)
+*.docx
